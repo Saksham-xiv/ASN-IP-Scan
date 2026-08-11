@@ -175,6 +175,10 @@ def walk_prefix(conn, net, args, bar, task, budget):
     queried = 0
     hits = 0
 
+    # deepest node that turned out to exist, used to tell "this zone has
+    # nothing in it" from "this zone cannot be walked"
+    deepest = 0
+
     with ThreadPoolExecutor(max_workers=args.v6_threads) as pool:
 
         while not STOP.is_set() and queried < budget:
@@ -195,6 +199,9 @@ def walk_prefix(conn, net, args, bar, task, budget):
             subnets = []
 
             for node, _p, depth, attempts, status, hostname in results:
+
+                if status in ("ok", "empty"):
+                    deepest = max(deepest, depth)
 
                 if status == "ok":
 
@@ -292,7 +299,7 @@ def walk_prefix(conn, net, args, bar, task, budget):
         with conn:
             checkpoint(conn, prefix, 6, None, done=1)
 
-    return queried, hits, remaining
+    return queried, hits, remaining, deepest
 
 
 def scan_v6(conn, nets, args):
@@ -316,6 +323,8 @@ def scan_v6(conn, nets, args):
     total_queried = 0
     total_hits = 0
 
+    unwalkable = []
+
     budget = args.v6_max_nodes
 
     bar = progress_bar(known_total=False)
@@ -336,7 +345,7 @@ def scan_v6(conn, nets, args):
             if not prepare_prefix(conn, net, args):
                 continue
 
-            queried, hits, remaining = walk_prefix(
+            queried, hits, remaining, deepest = walk_prefix(
                 conn, net, args, bar, task, budget - total_queried)
 
             total_queried += queried
@@ -347,8 +356,24 @@ def scan_v6(conn, nets, args):
                      f"still queued - rerun to continue "
                      f"(--v6-max-nodes {budget * 2})")
 
+            elif not hits and deepest <= net.prefixlen // 4:
+                # the root exists but not one of its 16 children does, so
+                # there is no tree here to descend. Some networks answer
+                # for a leaf without publishing the branches above it.
+                unwalkable.append(prefix)
+
     info(f"IPv6 pass: {fmt(total_queried)} tree nodes queried, "
          f"{fmt(total_hits)} addresses found")
+
+    if unwalkable and not total_hits:
+        warn(f"{len(unwalkable)} of {len(nets)} IPv6 blocks have no walkable "
+             f"reverse tree: the block's own node exists, but none of its 16 "
+             f"children do.")
+        warn("This network answers PTR queries for individual addresses "
+             "without publishing the branches above them - Meta and "
+             "Cloudflare both do. No node budget will help; there is nothing "
+             "to descend.")
+        warn("Its IPv4 space is still fully scannable:  --family 4")
 
     return total_queried, total_hits
 

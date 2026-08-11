@@ -267,6 +267,36 @@ def check_holder(asn, args, conn):
 
 # --- run ----------------------------------------------------------------
 
+SYNC_FOLDERS = ("onedrive", "dropbox", "google drive", "googledrive",
+                "icloud", "nextcloud", "sync")
+
+
+def check_db_location(path):
+    """
+    Refuse to be quietly corrupted by a file-sync client.
+
+    SQLite in WAL mode keeps committed data in a separate -wal file until
+    it is checkpointed. A sync client that copies, locks or rolls back the
+    two files independently can leave the database intact but missing
+    everything written since the last checkpoint - a scan that "worked"
+    and then has no results in it.
+    """
+
+    parts = [p.lower() for p in os.path.abspath(path).split(os.sep)]
+
+    hit = next((p for p in parts if any(s in p for s in SYNC_FOLDERS)), None)
+
+    if not hit:
+        return
+
+    warn(f"The database is inside a synced folder ('{hit}'). A sync client "
+         f"can roll back SQLite's write-ahead log mid-scan and silently "
+         f"discard results.")
+    warn("Keep the database on a local disk and only the report in the "
+         "synced folder:")
+    warn(f"    --db %LOCALAPPDATA%\\asn-ip-scan\\{os.path.basename(path)}")
+
+
 def install_sigint():
 
     def handler(signum, frame):
@@ -312,6 +342,8 @@ def main(argv=None):
             return 2
 
         info(f"Database: {args.db}")
+
+        check_db_location(args.db)
 
         if args.relabel:
             rule("Relabel")
