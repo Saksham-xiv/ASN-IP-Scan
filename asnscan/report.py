@@ -172,6 +172,27 @@ def prefix_rows(conn):
     return out
 
 
+V6_NETWORK_HEADER = ["Network In Use", "Announced Prefix", "Nibbles"]
+
+V6_WILDCARD_HEADER = ["Covers", "Announced Prefix", "Wildcard Hostname",
+                      "Nibbles"]
+
+
+def v6_network_rows(conn):
+    """Networks the walk proved are in use but was told not to descend."""
+
+    return conn.execute(
+        "SELECT network, prefix, depth FROM v6_subnets ORDER BY network"
+    ).fetchall()
+
+
+def v6_wildcard_rows(conn):
+
+    return conn.execute(
+        "SELECT covers, prefix, hostname, depth FROM v6_wildcards "
+        "ORDER BY covers").fetchall()
+
+
 def label_rows(conn, only_matching=False, top=None):
 
     sql = ("SELECT label, COUNT(*) FROM results WHERE hostname <> '' "
@@ -190,10 +211,11 @@ def overview_rows(conn, args):
 
     meta = get_json(conn, "asn_info", {}) or {}
 
+    # scoped to IPv4: the sweep's figures must not silently absorb the
+    # addresses the IPv6 walk contributed
     counts = dict(conn.execute(
-        "SELECT status, COUNT(*) FROM results GROUP BY status"))
-
-    scanned = sum(counts.values())
+        "SELECT status, COUNT(*) FROM results WHERE version = 4 "
+        "GROUP BY status"))
 
     v4_scope = 0
     v4_prefixes = 0
@@ -236,9 +258,10 @@ def overview_rows(conn, args):
     rows = [
         # first line, so a report can never be mistaken for another network
         ("ASN", f"AS{asn}"),
-        ("Holder", meta.get("holder", "unknown")),
-        ("Country", meta.get("country", "")),
-        ("Prefix source", meta.get("prefix_source", meta.get("source", ""))),
+        ("Holder", meta.get("holder") or "unknown"),
+        ("Country", meta.get("country") or ""),
+        ("Registry", meta.get("registry") or ""),
+        ("Prefix source", meta.get("prefix_source") or meta.get("source", "")),
         ("Report generated", time.strftime("%Y-%m-%d %H:%M:%S")),
         ("", ""),
 
@@ -476,31 +499,18 @@ def save_excel(conn, path, args):
 def v6_extra(wb, conn, args):
     """Sheets that only exist when the IPv6 walk produced something."""
 
-    subnets = conn.execute(
-        "SELECT network, prefix, depth FROM v6_subnets ORDER BY network"
-    ).fetchall()
+    for title, header, widths, rows in (
+            ("IPv6 Networks", V6_NETWORK_HEADER, [44, 24, 10],
+             v6_network_rows(conn)),
+            ("IPv6 Wildcards", V6_WILDCARD_HEADER, [44, 24, 56, 10],
+             v6_wildcard_rows(conn))):
 
-    if subnets:
-        ws = SheetWriter(wb, "IPv6 Networks",
-                         ["Network In Use", "Announced Prefix", "Nibbles"],
-                         [44, 24, 10], args.max_rows)
+        if not rows:
+            continue
 
-        for row in subnets:
-            ws.append(list(row))
+        ws = SheetWriter(wb, title, header, widths, args.max_rows)
 
-        ws.close()
-
-    wild = conn.execute(
-        "SELECT covers, prefix, hostname, depth FROM v6_wildcards "
-        "ORDER BY covers").fetchall()
-
-    if wild:
-        ws = SheetWriter(wb, "IPv6 Wildcards",
-                         ["Covers", "Announced Prefix", "Wildcard Hostname",
-                          "Nibbles"],
-                         [44, 24, 56, 10], args.max_rows)
-
-        for row in wild:
+        for row in rows:
             ws.append(list(row))
 
         ws.close()
@@ -560,6 +570,23 @@ def save_csv(conn, path, args):
     good(f"{base}_prefixes.csv")
     good(f"{base}_overview.csv")
 
+    # written only when the IPv6 walk actually produced them, so a run
+    # that found none does not leave a trail of empty files
+    for suffix, header, rows in (
+            ("ipv6_networks", V6_NETWORK_HEADER, v6_network_rows(conn)),
+            ("ipv6_wildcards", V6_WILDCARD_HEADER, v6_wildcard_rows(conn))):
+
+        if not rows:
+            continue
+
+        with open(f"{base}_{suffix}.csv", "w", newline="",
+                  encoding="utf-8-sig") as f:
+            w = csv.writer(f)
+            w.writerow(header)
+            w.writerows(rows)
+
+        good(f"{base}_{suffix}.csv  ({fmt(len(rows))} rows)")
+
     return n_detail
 
 
@@ -611,8 +638,16 @@ def save_json(conn, path, args):
                       "probed", "with_ptr", "status"], row))
             for row in prefix_rows(conn)
         ],
-        "labels": [{"label": l, "addresses": n}
-                   for l, n in label_rows(conn, args.only_matching)],
+        "labels": [{"label": label, "addresses": n}
+                   for label, n in label_rows(conn, args.only_matching)],
+        "ipv6_networks_in_use": [
+            {"network": r[0], "prefix": r[1], "nibbles": r[2]}
+            for r in v6_network_rows(conn)
+        ],
+        "ipv6_wildcards": [
+            {"covers": r[0], "prefix": r[1], "hostname": r[2], "nibbles": r[3]}
+            for r in v6_wildcard_rows(conn)
+        ],
         "ranges": ranges,
         "addresses_file": detail_path,
         "address_count": n_detail,

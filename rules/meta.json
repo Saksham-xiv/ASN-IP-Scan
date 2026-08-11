@@ -1,0 +1,68 @@
+{
+  "name": "Meta",
+  "_comment": "Zones prove who owns a PTR name; tokens in the labels to the left say which product it serves. Infra tokens (edge, star, shv, fna, p1) are deliberately absent - they carry no product meaning and the zone already answers that question. Use with: --rules rules/meta.json [--only-matching]",
+
+  "zones": {
+    "facebook.com": "Facebook",
+    "fbcdn.net": "Facebook",
+    "fbsbx.com": "Facebook",
+    "fb.com": "Facebook",
+    "fb.gg": "Facebook Gaming",
+    "fbinfra.net": "Facebook",
+    "tfbnw.net": "Facebook",
+    "thefacebook.com": "Facebook",
+    "facebookmail.com": "Facebook",
+
+    "instagram.com": "Instagram",
+    "cdninstagram.com": "Instagram",
+    "ig.me": "Instagram",
+
+    "threads.net": "Threads",
+    "threads.com": "Threads",
+
+    "whatsapp.net": "WhatsApp",
+    "whatsapp.com": "WhatsApp",
+    "wa.me": "WhatsApp",
+
+    "messenger.com": "Messenger",
+    "m.me": "Messenger",
+
+    "meta.com": "Meta",
+    "meta.ai": "Meta AI",
+
+    "oculus.com": "Meta Quest",
+    "oculusvr.com": "Meta Quest",
+    "horizon.meta.com": "Horizon Worlds",
+
+    "workplace.com": "Workplace",
+    "internet.org": "Free Basics",
+    "mapillary.com": "Mapillary",
+    "wit.ai": "Wit.ai",
+    "crowdtangle.com": "CrowdTangle",
+    "novi.com": "Novi"
+  },
+
+  "tokens": {
+    "whatsapp": "WhatsApp",
+    "wa": "WhatsApp",
+    "instagram": "Instagram",
+    "cdninstagram": "Instagram",
+    "ig": "Instagram",
+    "insta": "Instagram",
+    "threads": "Threads",
+    "barcelona": "Threads",
+    "messenger": "Messenger",
+    "msgr": "Messenger",
+    "msg": "Messenger",
+    "oculus": "Meta Quest",
+    "quest": "Meta Quest",
+    "horizon": "Horizon Worlds",
+    "workplace": "Workplace",
+    "mapillary": "Mapillary",
+    "facebook": "Facebook",
+    "fbcdn": "Facebook",
+    "fblite": "Facebook Lite",
+    "gaming": "Facebook Gaming",
+    "meta": "Meta"
+  }
+}

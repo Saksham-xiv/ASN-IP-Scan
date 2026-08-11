@@ -11,12 +11,11 @@ frontier have no ASN column, so mixing two would silently blend two
 networks into one report. `bind_db_to_asn` enforces that.
 """
 
-import ipaddress
 import json
 import sqlite3
 import time
 
-from .console import bad, info
+from .console import bad
 from .util import fmt, int_to_key
 
 
@@ -205,19 +204,6 @@ def save_prefixes(conn, nets):
         )
 
 
-def load_prefixes(conn, version=None):
-
-    if version:
-        rows = conn.execute(
-            "SELECT prefix FROM prefixes WHERE version=?", (version,)
-        ).fetchall()
-    else:
-        rows = conn.execute("SELECT prefix FROM prefixes").fetchall()
-
-    return sorted((ipaddress.ip_network(r[0]) for r in rows),
-                  key=lambda n: (n.version, n.network_address, n.prefixlen))
-
-
 # --- results / checkpoints ----------------------------------------------
 
 INSERT_RESULT = (
@@ -274,39 +260,6 @@ def load_progress(conn):
     }
 
 
-def mark_done(conn, prefix, version):
-
-    with conn:
-        conn.execute(
-            "INSERT INTO progress (prefix, version, cursor, done, updated) "
-            "VALUES (?, ?, NULL, 1, ?) "
-            "ON CONFLICT(prefix) DO UPDATE SET done=1, updated=excluded.updated",
-            (prefix, version, int(time.time())),
-        )
-
-
-def status_counts(conn, version=None):
-
-    if version:
-        rows = conn.execute(
-            "SELECT status, COUNT(*) FROM results WHERE version=? "
-            "GROUP BY status", (version,))
-    else:
-        rows = conn.execute(
-            "SELECT status, COUNT(*) FROM results GROUP BY status")
-
-    return dict(rows)
-
-
-def vacuum_note(conn):
-    """Size of the database on disk, for the closing summary."""
-
-    page_size = conn.execute("PRAGMA page_size").fetchone()[0]
-    pages = conn.execute("PRAGMA page_count").fetchone()[0]
-
-    return page_size * pages
-
-
 # --- IPv6 walk frontier -------------------------------------------------
 
 def queue_size(conn, prefix=None):
@@ -331,13 +284,20 @@ def enqueue(conn, nodes):
 
 
 def take_batch(conn, prefix, limit):
+    """
+    Next nodes to expand: deepest first.
+
+    Depth-first is not a preference here, it is the difference between a
+    walk that works and one that does not. Breadth-first would expand
+    every node at level n before touching level n+1, so the frontier
+    grows 16x per level (a /32 has 16^24 nodes at full depth) and not one
+    real address is found until the very end. Diving instead keeps the
+    frontier at roughly 16 nodes per level and starts producing addresses
+    within seconds.
+    """
 
     return conn.execute(
         "SELECT node, prefix, depth, attempts FROM v6_queue "
-        "WHERE prefix=? ORDER BY depth, node LIMIT ?",
+        "WHERE prefix=? ORDER BY depth DESC, node LIMIT ?",
         (prefix, limit),
     ).fetchall()
-
-
-def info_db(path, conn):
-    info(f"Database: {path}  ({vacuum_note(conn) / 1e6:.1f} MB)")

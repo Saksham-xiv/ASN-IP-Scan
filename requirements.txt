@@ -1,0 +1,10 @@
+# Required
+dnspython>=2.4      # the only way to tell NXDOMAIN from a timeout, and
+                    # the whole basis of the IPv6 ip6.arpa tree walk
+requests>=2.31      # RIPEstat / BGPView prefix lookups
+openpyxl>=3.1       # streaming .xlsx writer
+rich>=13.0          # progress display and console tables
+
+# Recommended
+tldextract>=5.0     # accurate registrable domains (public-suffix aware);
+                    # falls back to a built-in suffix list if missing

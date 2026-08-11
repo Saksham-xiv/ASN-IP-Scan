@@ -175,7 +175,7 @@ def walk_prefix(conn, net, args, bar, task, budget):
     queried = 0
     hits = 0
 
-    with ThreadPoolExecutor(max_workers=args.threads) as pool:
+    with ThreadPoolExecutor(max_workers=args.v6_threads) as pool:
 
         while not STOP.is_set() and queried < budget:
 

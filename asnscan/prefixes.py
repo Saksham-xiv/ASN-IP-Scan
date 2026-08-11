@@ -35,10 +35,25 @@ TIMEOUT = 45
 
 # --- who owns the ASN ---------------------------------------------------
 
-def asn_info(asn):
-    """Registered holder of an ASN. Empty strings when it cannot be found."""
+def _bgpview_asn(asn, timeout=15):
 
-    out = {"holder": "", "country": "", "source": ""}
+    r = requests.get(BGPVIEW_ASN.format(asn=asn), headers=HEADERS,
+                     timeout=timeout)
+    r.raise_for_status()
+
+    return r.json()["data"]
+
+
+def asn_info(asn):
+    """
+    Who does this ASN belong to?
+
+    RIPEstat has the authoritative holder string but no country, so the
+    country comes from BGPView as a best-effort extra. Neither is fatal:
+    every field is allowed to come back empty.
+    """
+
+    out = {"holder": "", "country": "", "registry": "", "source": ""}
 
     try:
         r = requests.get(RIPE_OVERVIEW, headers=HEADERS, timeout=TIMEOUT,
@@ -49,27 +64,21 @@ def asn_info(asn):
         data = r.json()["data"]
 
         out["holder"] = data.get("holder") or ""
+        out["registry"] = (data.get("block") or {}).get("desc") or ""
         out["source"] = "RIPEstat"
-
-        block = data.get("block") or {}
-        out["country"] = block.get("resource") or ""
-
-        if out["holder"]:
-            return out
 
     except (requests.RequestException, ValueError, KeyError):
         pass
 
     try:
-        r = requests.get(BGPVIEW_ASN.format(asn=asn), headers=HEADERS,
-                         timeout=TIMEOUT)
-        r.raise_for_status()
+        data = _bgpview_asn(asn)
 
-        data = r.json()["data"]
-
-        out["holder"] = data.get("description_short") or data.get("name") or ""
         out["country"] = data.get("country_code") or ""
-        out["source"] = "BGPView"
+
+        if not out["holder"]:
+            out["holder"] = (data.get("description_short")
+                             or data.get("name") or "")
+            out["source"] = "BGPView"
 
     except (requests.RequestException, ValueError, KeyError):
         pass

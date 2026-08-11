@@ -1,0 +1,71 @@
+{
+  "name": "Public cloud and CDN",
+  "_comment": "A starting point for sorting a mixed ASN's reverse names into the platform that serves them. Copy this file and add your own zones - the format is just {hostname suffix: label}.",
+
+  "zones": {
+    "amazonaws.com": "AWS",
+    "awsglobalaccelerator.com": "AWS",
+    "cloudfront.net": "AWS CloudFront",
+
+    "1e100.net": "Google",
+    "googleusercontent.com": "Google",
+    "google.com": "Google",
+    "gvt1.com": "Google",
+    "doubleclick.net": "Google Ads",
+
+    "cloudapp.azure.com": "Azure",
+    "cloudapp.net": "Azure",
+    "azure.com": "Azure",
+    "microsoft.com": "Microsoft",
+    "outlook.com": "Microsoft 365",
+
+    "cloudflare.com": "Cloudflare",
+    "cloudflare.net": "Cloudflare",
+
+    "akamaitechnologies.com": "Akamai",
+    "akamai.net": "Akamai",
+    "akamaiedge.net": "Akamai",
+    "deploy.static.akamaitechnologies.com": "Akamai",
+
+    "fastly.net": "Fastly",
+    "fastlylb.net": "Fastly",
+
+    "digitalocean.com": "DigitalOcean",
+    "linode.com": "Linode",
+    "vultr.com": "Vultr",
+    "hetzner.com": "Hetzner",
+    "your-server.de": "Hetzner",
+    "ovh.net": "OVH",
+    "ovh.com": "OVH",
+    "contabo.net": "Contabo",
+    "oraclecloud.com": "Oracle Cloud",
+    "alibabacloud.com": "Alibaba Cloud",
+
+    "apple.com": "Apple",
+    "netflix.com": "Netflix",
+    "nflxvideo.net": "Netflix",
+    "ttdns2.com": "TikTok",
+    "tiktokcdn.com": "TikTok"
+  },
+
+  "tokens": {
+    "cloudfront": "AWS CloudFront",
+    "ec2": "AWS EC2",
+    "s3": "AWS S3",
+    "compute": "Cloud compute",
+    "vpn": "VPN endpoint",
+    "mail": "Mail",
+    "smtp": "Mail",
+    "mx": "Mail",
+    "ns": "Nameserver",
+    "dns": "Nameserver",
+    "router": "Network gear",
+    "gw": "Network gear",
+    "bras": "Broadband access",
+    "dsl": "Broadband access",
+    "cpe": "Customer premises",
+    "static": "Static assignment",
+    "dynamic": "Dynamic assignment",
+    "dhcp": "Dynamic assignment"
+  }
+}
