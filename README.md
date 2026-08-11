@@ -6,7 +6,7 @@ Give it an AS number. It pulls the ASN's announced prefixes from the global BGP
 table, resolves the address space to hostnames, groups the results by who owns
 the names, collapses them into exact CIDR ranges, and writes a spreadsheet.
 
-```
+```powershell
 python asn_scan.py --asn 32934                 # Meta,  IPv4 + IPv6
 python asn_scan.py --asn AS15169 --family 6    # Google, IPv6 only
 python asn_scan.py --asn 13335 --prefixes-only # just the announced space
@@ -26,7 +26,7 @@ hosts.
 
 ```powershell
 pip install -r requirements.txt
-python selftest.py          # 37 offline checks, no network needed
+python selftest.py          # 56 offline checks, no network needed
 ```
 
 `dnspython` is the one dependency that really matters. It is the only way to
@@ -61,7 +61,7 @@ nibbles deep under `ip6.arpa`, and a compliant nameserver answers three
 distinguishable ways:
 
 | Answer | Meaning | What the walk does |
-|---|---|---|
+| --- | --- | --- |
 | `NOERROR` + PTR | a name lives here | at depth 32, record the address |
 | `NOERROR`, no PTR | *empty non-terminal* — nothing here, but there are children below | descend, 16 queries |
 | `NXDOMAIN` | nothing exists at or under this node | prune — one answer can eliminate 16ⁿ addresses |
@@ -75,7 +75,7 @@ per level and finding nothing until the very end.
 On Google's `2001:4860::/32` that turns an impossible enumeration into real
 results in seconds:
 
-```
+```text
 [+] IPv6 pass: 2,500 tree nodes queried, 972 addresses found
 
   2001:4860:4809:2::1     ig-in-x01.1e100.net
@@ -97,15 +97,48 @@ not a limit: rerun with a bigger one and it continues from where it stopped.
 
 ---
 
+## What "announced" means
+
+The prefix list is what the ASN **announces in BGP**, not what it is allocated.
+Space an organisation owns but does not route is not here — that is an
+RDAP/whois question — and neither is space announced under a different ASN.
+
+It is also a *window*, not a snapshot. RIPEstat reports what was announced over
+a lookback period (two weeks by default) and tags each prefix with the timelines
+it was actually visible for, so a prefix withdrawn ten days ago is still in the
+list. Those timelines are kept and turned into a state:
+
+| State | Meaning |
+| --- | --- |
+| `live` | still announced at the end of the window |
+| `recent` | announced during the window, gone before it closed |
+| `withdrawn` | present on an earlier run, absent from this one |
+
+```powershell
+python asn_scan.py --asn 13335 --live-only              # skip anything not live
+python asn_scan.py --asn 13335 --announced-within 3d    # or an age
+```
+
+On Cloudflare that currently excludes 52 of 2,429 blocks (~2%). Overlaps are
+collapsed *before* the states are worked out, which gives the right answer: a
+/24 withdrawn from inside a /17 that is still announced is still routed space,
+so the collapsed block stays `live`.
+
+Nothing is ever silently dropped. Blocks the filter skips still appear on the
+Prefixes sheet with their state and last-seen date, and a block the ASN stops
+announcing between runs is marked `withdrawn` rather than deleted — its scan
+results are real findings from when that space was still routed there, and the
+Overview says how many addresses are affected.
+
 ## Output
 
 `output/AS<n>_report.xlsx`, with `--format csv|json|all` for the same content
 without the spreadsheet row ceiling.
 
 | Sheet | What is in it |
-|---|---|
+| --- | --- |
 | **Overview** | ASN, holder, announced space, coverage, per-status counts, breakdown by label |
-| **Prefixes** | every announced prefix, its size, how much was probed, how much answered |
+| **Prefixes** | every announced block: state (`live` / `recent` / `withdrawn`), first and last seen, size, how much was probed, how much answered |
 | **IP Details** | one row per named address: label, IP, family, prefix, hostname, its contiguous range |
 | **Ranges** | those addresses collapsed into exact minimal CIDR blocks |
 | **IPv6 Networks** | networks proved in use when `--v6-max-depth` stopped the descent early |
@@ -129,7 +162,7 @@ Without a rules file, results are grouped by the hostname's registrable domain
 (public-suffix aware via `tldextract`), which is immediately useful on an ASN
 you know nothing about:
 
-```
+```text
 googleusercontent.com   4,096
 google.com                665
 googlebot.com             267
@@ -144,7 +177,7 @@ say which product it serves:
 python asn_scan.py --asn 32934 --rules rules/meta.json --only-matching
 ```
 
-```
+```text
 instagram-p42-1.fna.fbcdn.net        -> Instagram
 whatsapp-cdn-shv-01-atl3.fbcdn.net   -> WhatsApp
 edge-star-shv-01-atl3.facebook.com   -> Facebook
@@ -173,7 +206,7 @@ node.
 python asn_scan.py --asn 32934                 # start (or resume)
 python asn_scan.py --asn 32934 --retry-errors  # re-query only what never answered
 python asn_scan.py --asn 32934 --report-only   # rebuild the report, no DNS at all
-```
+```powershell
 
 An `error` row is not "no PTR" — it is "we do not know", and a busy resolver can
 leave millions of them. `--retry-errors` re-queries exactly those, and requeues
@@ -188,8 +221,10 @@ refuses rather than allow it.
 ## Options worth knowing
 
 | Option | Why |
-|---|---|
+| --- | --- |
 | `--family 4 \| 6 \| both` | skip a family entirely |
+| `--live-only` | scan only blocks still announced at the end of the lookback window |
+| `--announced-within 3d` | same idea, by age — `3d`, `36h`, `2w` |
 | `--resolvers 1.1.1.1,8.8.8.8` | one fast resolver beats three slow ones; your ISP's is often the slowest |
 | `--rate 500` | cap queries/second across all threads. A resolver that starts refusing turns a scan into a field of false "unresolved" rows |
 | `--threads` | default 256 with dnspython |
@@ -208,12 +243,12 @@ queries. `--yes` skips the prompt; unattended runs refuse without it.
 
 ## Layout
 
-```
+```text
 asn_scan.py         entry point  (also: python -m asnscan)
-selftest.py         37 offline checks
+selftest.py         56 offline checks
 asnscan/
   cli.py            arguments, run order, safety rails
-  prefixes.py       RIPEstat -> BGPView fallback, collapse overlaps
+  prefixes.py       RIPEstat -> BGPView fallback, collapse overlaps, freshness
   store.py          SQLite schema, checkpoints, the IPv6 frontier
   resolve.py        PTR / FCrDNS / the single ip6.arpa query, rate limiter
   probe.py          the per-address unit of work
@@ -238,6 +273,7 @@ rules/
   residential ISP is often nearly all of it.
 * IPv6 coverage depends entirely on the operator publishing PTRs in a walkable
   zone. Many do; some do not; the report says which prefixes came back empty.
-* Prefix lists come from what is announced in BGP *today*. `--refresh-prefixes`
+* Prefix lists come from BGP, over a two-week lookback window — see
+  [What "announced" means](#what-announced-means). `--refresh-prefixes`
   re-fetches; the cached list is otherwise reused so a resumed scan stays
-  consistent with the one it is resuming.
+  consistent with the one it is resuming, states included.

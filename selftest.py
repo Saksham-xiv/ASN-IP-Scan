@@ -13,12 +13,13 @@ import ipaddress
 import sys
 
 from asnscan.classify import Classifier
+from asnscan.prefixes import build, select
 from asnscan.probe import make_row, set_classifier
-from asnscan.report import iter_report
+from asnscan.report import iter_report, prefix_rows
 from asnscan.scan6 import (children, network_to_node, node_to_address,
                            node_to_network, random_deep_node)
-from asnscan.store import open_db, set_state, write_rows
-from asnscan.util import (int_to_key, key_to_int, parse_asn,
+from asnscan.store import open_db, save_prefixes, set_state, write_rows
+from asnscan.util import (int_to_key, key_to_int, parse_asn, parse_duration,
                           registrable_domain, summarize_run)
 
 
@@ -148,6 +149,99 @@ check("wildcard probe stays under the prefix",
       probe_node.endswith("0.6.8.4.1.0.0.2"), True)
 
 
+# --- announcement freshness ---------------------------------------------
+
+section("announcement freshness")
+
+check("duration days", parse_duration("7d").total_seconds(), 604800.0)
+check("duration hours", parse_duration("36h").total_seconds(), 129600.0)
+check("duration weeks", parse_duration("2w").total_seconds(), 1209600.0)
+check("bare number means days", parse_duration("3").total_seconds(), 259200.0)
+
+WINDOW = {"start": "2026-07-28T00:00:00", "end": "2026-08-11T00:00:00"}
+
+END = WINDOW["end"]
+
+records = [
+    # two halves that collapse into one /24, both still announced
+    {"prefix": "192.0.2.0/25", "first_seen": WINDOW["start"], "last_seen": END},
+    {"prefix": "192.0.2.128/25", "first_seen": WINDOW["start"], "last_seen": END},
+    # withdrawn ten days before the window closed
+    {"prefix": "198.51.100.0/24", "first_seen": WINDOW["start"],
+     "last_seen": "2026-08-01T00:00:00"},
+    # a /24 dropped from inside a /16 that is still announced: the space
+    # is still routed, so the collapsed block stays live
+    {"prefix": "203.0.0.0/16", "first_seen": WINDOW["start"], "last_seen": END},
+    {"prefix": "203.0.113.0/24", "first_seen": WINDOW["start"],
+     "last_seen": "2026-07-30T00:00:00"},
+    {"prefix": "2001:db8::/32", "first_seen": WINDOW["start"], "last_seen": END},
+]
+
+entries = build(records, WINDOW)
+
+check("overlaps collapse", [str(e["net"]) for e in entries],
+      ["192.0.2.0/24", "198.51.100.0/24", "203.0.0.0/16", "2001:db8::/32"])
+
+states = {str(e["net"]): e["state"] for e in entries}
+
+check("still announced is live", states["192.0.2.0/24"], "live")
+check("gone before the window closed is recent",
+      states["198.51.100.0/24"], "recent")
+check("most recent evidence wins inside a block",
+      states["203.0.0.0/16"], "live")
+check("v6 block state", states["2001:db8::/32"], "live")
+
+kept, dropped = select(entries, WINDOW, "all")
+check("'all' keeps everything", (len(kept), len(dropped)), (4, 0))
+
+kept, dropped = select(entries, WINDOW, "live")
+check("'live' drops the withdrawn block",
+      ([str(e["net"]) for e in kept], [str(e["net"]) for e in dropped]),
+      (["192.0.2.0/24", "203.0.0.0/16", "2001:db8::/32"],
+       ["198.51.100.0/24"]))
+
+kept, _ = select(entries, WINDOW, "30d")
+check("a wide age window keeps it", len(kept), 4)
+
+kept, _ = select(entries, WINDOW, "5d")
+check("a narrow age window drops it", len(kept), 3)
+
+
+# --- withdrawal is recorded, never silently dropped ---------------------
+
+section("withdrawal")
+
+conn = open_db(":memory:")
+
+save_prefixes(conn, entries)
+
+check("all blocks recorded",
+      conn.execute("SELECT COUNT(*) FROM prefixes").fetchone()[0], 4)
+
+# the ASN stops announcing 203.0.0.0/16 entirely
+save_prefixes(conn, [e for e in entries if str(e["net"]) != "203.0.0.0/16"])
+
+check("vanished block is kept, not deleted",
+      conn.execute("SELECT COUNT(*) FROM prefixes").fetchone()[0], 4)
+
+check("vanished block is marked withdrawn",
+      conn.execute("SELECT state FROM prefixes WHERE prefix='203.0.0.0/16'"
+                   ).fetchone()[0], "withdrawn")
+
+check("the others keep their state",
+      conn.execute("SELECT state FROM prefixes WHERE prefix='192.0.2.0/24'"
+                   ).fetchone()[0], "live")
+
+# and it comes back if the ASN announces it again
+save_prefixes(conn, entries)
+
+check("re-announced block goes back to live",
+      conn.execute("SELECT state FROM prefixes WHERE prefix='203.0.0.0/16'"
+                   ).fetchone()[0], "live")
+
+conn.close()
+
+
 # --- store + report end to end ------------------------------------------
 
 section("store and report")
@@ -178,6 +272,14 @@ with conn:
                          "v6.example.com", "ok"))
 
     write_rows(conn, "192.0.2.0/24", rows)
+
+save_prefixes(conn, [e for e in entries if str(e["net"]) == "192.0.2.0/24"])
+
+prow = prefix_rows(conn)[0]
+
+check("prefix row joins to the scan results",
+      (prow[0], prow[2], prow[8], prow[9]),
+      ("192.0.2.0/24", "live", 15, 14))
 
 report = list(iter_report(conn))
 

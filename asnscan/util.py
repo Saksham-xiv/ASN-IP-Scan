@@ -48,6 +48,31 @@ def count_cell(n):
     return n if n <= EXACT_INT_MAX else str(n)
 
 
+DURATION_UNITS = {"m": 60, "h": 3600, "d": 86400, "w": 604800}
+
+
+def parse_duration(text):
+    """'36h', '7d', '2w' -> timedelta. Bare numbers are days."""
+
+    import datetime
+
+    text = str(text).strip().lower()
+
+    if not text:
+        raise ValueError("empty duration")
+
+    unit = DURATION_UNITS.get(text[-1])
+
+    value = text[:-1] if unit else text
+
+    try:
+        amount = float(value)
+    except ValueError:
+        raise ValueError(f"not a duration: {text!r}") from None
+
+    return datetime.timedelta(seconds=amount * (unit or DURATION_UNITS["d"]))
+
+
 def parse_asn(text):
     """Accept 32934, AS32934 or as32934."""
 

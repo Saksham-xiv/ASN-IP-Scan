@@ -152,15 +152,20 @@ def prefix_rows(conn):
 
     out = []
 
-    for prefix, version, first, last, addresses in conn.execute(
-            "SELECT prefix, version, first_ip, last_ip, addresses "
-            "FROM prefixes ORDER BY version, prefix"):
+    for (prefix, version, first, last, addresses, first_seen, last_seen,
+         state) in conn.execute(
+            "SELECT prefix, version, first_ip, last_ip, addresses, "
+            "first_seen, last_seen, state FROM prefixes "
+            "ORDER BY version, prefix"):
 
         scanned, found = seen.get(prefix, (0, 0))
 
         out.append([
             prefix,
             f"IPv{version}",
+            state,
+            first_seen[:10],
+            last_seen[:10],
             first,
             last,
             count_cell(int(addresses)),
@@ -170,6 +175,12 @@ def prefix_rows(conn):
         ])
 
     return out
+
+
+def prefix_state_counts(conn):
+
+    return dict(conn.execute(
+        "SELECT state, COUNT(*) FROM prefixes GROUP BY state"))
 
 
 V6_NETWORK_HEADER = ["Network In Use", "Announced Prefix", "Nibbles"]
@@ -235,6 +246,16 @@ def overview_rows(conn, args):
     v4_scanned = conn.execute(
         "SELECT COUNT(*) FROM results WHERE version = 4").fetchone()[0]
 
+    states = prefix_state_counts(conn)
+
+    window = get_json(conn, "prefix_window", {}) or {}
+
+    # results sitting in space the ASN no longer announces: still real
+    # findings, but no longer part of this network
+    stale_hits = conn.execute(
+        "SELECT COUNT(*) FROM results r JOIN prefixes p ON r.prefix = p.prefix "
+        "WHERE p.state <> 'live' AND r.hostname <> ''").fetchone()[0]
+
     named = conn.execute(
         "SELECT COUNT(*) FROM results WHERE hostname <> ''").fetchone()[0]
 
@@ -266,10 +287,16 @@ def overview_rows(conn, args):
         ("", ""),
 
         ("ANNOUNCED SPACE", ""),
+        ("Announcement window",
+         f"{window['start'][:10]} to {window['end'][:10]}"
+         if window.get("start") and window.get("end") else "current table"),
         ("IPv4 prefixes", v4_prefixes),
         ("IPv4 addresses", count_cell(v4_scope)),
         ("IPv6 prefixes", v6_prefixes),
         ("IPv6 addresses", count_cell(v6_scope)),
+        ("  still announced (live)", states.get("live", 0)),
+        ("  seen in window, gone by its end (recent)", states.get("recent", 0)),
+        ("  no longer announced (withdrawn)", states.get("withdrawn", 0)),
         ("", ""),
 
         ("IPv4 SWEEP", ""),
@@ -320,6 +347,15 @@ def overview_rows(conn, args):
                      f"Re-run with a larger --v6-max-nodes to finish."),
         ]
 
+    if stale_hits:
+        rows += [
+            ("", ""),
+            ("NOTE", f"{fmt(stale_hits)} of the addresses below sit in "
+                     f"blocks the ASN no longer announces (marked 'recent' "
+                     f"or 'withdrawn' on the Prefixes sheet). They were "
+                     f"found when that space was still routed here."),
+        ]
+
     return rows
 
 
@@ -339,9 +375,10 @@ RANGE_HEADER = ["Label", "Announced Prefix", "Contiguous Range",
                 "First IP", "Last IP", "Addresses"]
 RANGE_WIDTHS = [26, 24, 30, 40, 40, 14]
 
-PREFIX_HEADER = ["Prefix", "Family", "First IP", "Last IP", "Addresses",
-                 "Probed", "With PTR", "Status"]
-PREFIX_WIDTHS = [24, 8, 40, 40, 22, 14, 12, 14]
+PREFIX_HEADER = ["Prefix", "Family", "Announcement", "First Seen",
+                 "Last Seen", "First IP", "Last IP", "Addresses", "Probed",
+                 "With PTR", "Scan Status"]
+PREFIX_WIDTHS = [24, 8, 14, 12, 12, 40, 40, 22, 14, 12, 14]
 
 
 class SheetWriter:
@@ -634,8 +671,9 @@ def save_json(conn, path, args):
         "asn_info": get_json(conn, "asn_info", {}),
         "overview": {k: v for k, v in overview_rows(conn, args) if k and v != ""},
         "prefixes": [
-            dict(zip(["prefix", "family", "first_ip", "last_ip", "addresses",
-                      "probed", "with_ptr", "status"], row))
+            dict(zip(["prefix", "family", "announcement", "first_seen",
+                      "last_seen", "first_ip", "last_ip", "addresses",
+                      "probed", "with_ptr", "scan_status"], row))
             for row in prefix_rows(conn)
         ],
         "labels": [{"label": label, "addresses": n}

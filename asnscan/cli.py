@@ -16,7 +16,7 @@ from .resolve import HAVE_DNSPYTHON, STOP, configure
 from .scan4 import retry_errors, scan_v4
 from .scan6 import requeue_dead, scan_v6
 from .store import bind_db_to_asn, get_json, open_db, set_json
-from .util import fmt, fmt_duration, parse_asn
+from .util import fmt, fmt_duration, parse_asn, parse_duration
 
 
 EPILOG = """
@@ -59,6 +59,15 @@ def parse_args(argv=None):
     target.add_argument("--expect-holder", default="",
                         help="refuse to scan unless the registered holder "
                              "contains this text (case-insensitive)")
+    target.add_argument("--announced-within", default="all", metavar="WHEN",
+                        help="which blocks to scan: 'all' (default - "
+                             "everything announced during the source's "
+                             "lookback window, two weeks for RIPEstat), "
+                             "'live' (still announced at the end of it), or "
+                             "an age such as 3d / 36h / 2w. Blocks left out "
+                             "are still listed in the report.")
+    target.add_argument("--live-only", action="store_true",
+                        help="shorthand for --announced-within live")
 
     out = p.add_argument_group("output")
 
@@ -167,6 +176,16 @@ def parse_args(argv=None):
     args.probe_n = max(1, args.probe_n)
     args.attempts = max(1, args.attempts)
     args.v6_max_depth = max(1, min(32, args.v6_max_depth))
+
+    if args.live_only:
+        args.announced_within = "live"
+
+    if args.announced_within not in ("all", "live"):
+        try:
+            parse_duration(args.announced_within)
+        except ValueError as e:
+            p.error(f"--announced-within: {e}. Use 'all', 'live', or an age "
+                    f"like 3d / 36h / 2w.")
 
     os.makedirs(args.out_dir, exist_ok=True)
 
@@ -299,7 +318,8 @@ def main(argv=None):
             return 2
 
         nets = get_prefixes(conn, args.asn, args.families,
-                            args.refresh_prefixes, args.prefix_source)
+                            args.refresh_prefixes, args.prefix_source,
+                            args.announced_within)
 
         # remember which source answered, for the report header
         cached = get_json(conn, f"prefixes:{args.asn}", {}) or {}

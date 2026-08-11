@@ -37,12 +37,19 @@ CREATE INDEX IF NOT EXISTS idx_results_label  ON results(label);
 CREATE INDEX IF NOT EXISTS idx_results_status ON results(status);
 CREATE INDEX IF NOT EXISTS idx_results_prefix ON results(prefix);
 
+-- state: live      still announced at the end of the lookback window
+--        recent    announced during it, gone before it closed
+--        withdrawn was here on an earlier run, absent from this one
 CREATE TABLE IF NOT EXISTS prefixes (
-    prefix    TEXT    PRIMARY KEY,
-    version   INTEGER NOT NULL,
-    first_ip  TEXT    NOT NULL,
-    last_ip   TEXT    NOT NULL,
-    addresses TEXT    NOT NULL
+    prefix     TEXT    PRIMARY KEY,
+    version    INTEGER NOT NULL,
+    first_ip   TEXT    NOT NULL,
+    last_ip    TEXT    NOT NULL,
+    addresses  TEXT    NOT NULL,
+    first_seen TEXT    NOT NULL DEFAULT '',
+    last_seen  TEXT    NOT NULL DEFAULT '',
+    state      TEXT    NOT NULL DEFAULT 'live',
+    checked    INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS progress (
@@ -93,6 +100,34 @@ CREATE TABLE IF NOT EXISTS state (k TEXT PRIMARY KEY, v TEXT);
 """
 
 
+# Columns added after the first release. CREATE TABLE IF NOT EXISTS does
+# nothing to a table that already exists, so a database written by an
+# earlier version needs them added explicitly.
+MIGRATIONS = {
+    "prefixes": (
+        ("first_seen", "TEXT NOT NULL DEFAULT ''"),
+        ("last_seen", "TEXT NOT NULL DEFAULT ''"),
+        ("state", "TEXT NOT NULL DEFAULT 'live'"),
+        ("checked", "INTEGER NOT NULL DEFAULT 0"),
+    ),
+}
+
+
+def migrate(conn):
+
+    for table, columns in MIGRATIONS.items():
+
+        have = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+
+        for name, decl in columns:
+
+            if name not in have:
+                conn.execute(
+                    f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+
+    conn.commit()
+
+
 def open_db(path):
 
     conn = sqlite3.connect(path, timeout=60, isolation_level="DEFERRED")
@@ -105,6 +140,8 @@ def open_db(path):
 
     conn.executescript(SCHEMA)
     conn.commit()
+
+    migrate(conn)
 
     return conn
 
@@ -189,19 +226,50 @@ def counter(conn, key):
 
 # --- prefixes -----------------------------------------------------------
 
-def save_prefixes(conn, nets):
+def save_prefixes(conn, entries):
+    """
+    Record the announced blocks, and mark whatever has since vanished.
+
+    Rows are never deleted: a block the ASN has stopped announcing still
+    has scan results behind it, and quietly dropping it would make those
+    addresses look like they were never found. It is marked withdrawn
+    instead, and the report says so.
+    """
+
+    now = int(time.time())
+
+    rows = [
+        (str(e["net"]), e["net"].version, str(e["net"].network_address),
+         str(e["net"].broadcast_address), str(e["net"].num_addresses),
+         e.get("first_seen", ""), e.get("last_seen", ""),
+         e.get("state", "live"), now)
+        for e in entries
+    ]
 
     with conn:
         conn.executemany(
-            "INSERT OR REPLACE INTO prefixes "
-            "(prefix, version, first_ip, last_ip, addresses) "
-            "VALUES (?, ?, ?, ?, ?)",
-            [
-                (str(n), n.version, str(n.network_address),
-                 str(n.broadcast_address), str(n.num_addresses))
-                for n in nets
-            ],
+            "INSERT INTO prefixes "
+            "(prefix, version, first_ip, last_ip, addresses, first_seen, "
+            " last_seen, state, checked) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(prefix) DO UPDATE SET "
+            "first_seen=excluded.first_seen, last_seen=excluded.last_seen, "
+            "state=excluded.state, checked=excluded.checked",
+            rows,
         )
+
+        # a temp table rather than a NOT IN (...) list: an ASN can
+        # announce more prefixes than SQLite will take as parameters
+        conn.execute("CREATE TEMP TABLE IF NOT EXISTS announced_now "
+                     "(prefix TEXT PRIMARY KEY)")
+        conn.execute("DELETE FROM announced_now")
+
+        conn.executemany("INSERT OR IGNORE INTO announced_now VALUES (?)",
+                         [(r[0],) for r in rows])
+
+        conn.execute(
+            "UPDATE prefixes SET state = 'withdrawn' "
+            "WHERE prefix NOT IN (SELECT prefix FROM announced_now)")
 
 
 # --- results / checkpoints ----------------------------------------------
