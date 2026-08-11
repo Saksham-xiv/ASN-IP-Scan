@@ -26,7 +26,7 @@ hosts.
 
 ```powershell
 pip install -r requirements.txt
-python selftest.py          # 56 offline checks, no network needed
+python selftest.py          # 63 offline checks, no network needed
 ```
 
 `dnspython` is the one dependency that really matters. It is the only way to
@@ -88,9 +88,13 @@ Two things can defeat a walk, and both are handled rather than ignored:
 * **wildcard zones** answer "yes" to every name, which would send the walk
   descending forever. Each prefix is probed with a random deep name first; a
   zone that answers is recorded in the report and not walked.
-* **non-compliant servers** that return NXDOMAIN for empty non-terminals cannot
-  be walked at all — the prefix simply comes back empty. Cloudflare's
-  `2606:4700::/32` behaves this way; Google's and Hurricane Electric's do not.
+* **servers that return NXDOMAIN for empty non-terminals** cannot be walked at
+  all — the prefix comes back empty after ~17 queries and is marked done.
+  Meta and Cloudflare both behave this way: `2a03:2880:f18a:188:face:b00c:0:25de`
+  has a PTR, but every ancestor node from depth 10 to 28 is NXDOMAIN, because
+  the names are synthesised on demand rather than stored in a zone. Google and
+  Hurricane Electric publish real zones and walk fine. **For a network like
+  Meta's, use IPv4** — the addresses are there, and the reverse tree is not.
 
 The frontier is stored in the database, so `--v6-max-nodes` is a per-run budget,
 not a limit: rerun with a bigger one and it continues from where it stopped.
@@ -184,6 +188,15 @@ edge-star-shv-01-atl3.facebook.com   -> Facebook
 notfacebook.com.example.net          -> no match   (suffixes, never substrings)
 ```
 
+Labels are decided during the scan, so editing a rules file does nothing to
+results already in the database. `--relabel` re-applies the rules to hostnames
+already on record and rebuilds the report — no DNS, a second or two, instead of
+rescanning:
+
+```powershell
+python asn_scan.py --asn 32934 --rules rules/meta.json --relabel
+```
+
 The format is just JSON — copy `rules/cloud.json` and add your own:
 
 ```json
@@ -206,6 +219,7 @@ node.
 python asn_scan.py --asn 32934                 # start (or resume)
 python asn_scan.py --asn 32934 --retry-errors  # re-query only what never answered
 python asn_scan.py --asn 32934 --report-only   # rebuild the report, no DNS at all
+python asn_scan.py --asn 32934 --relabel       # re-apply edited rules, no DNS
 ```powershell
 
 An `error` row is not "no PTR" — it is "we do not know", and a busy resolver can
@@ -233,6 +247,7 @@ refuses rather than allow it.
 | `--verify` | forward-confirm every hostname (roughly doubles the queries) |
 | `--expect-holder Google` | refuse to run unless the ASN is registered to who you think it is |
 | `--limit 5000` | stop after N IPv4 lookups, for a quick look |
+| `--relabel` | re-apply an edited rules file to results already scanned, no DNS |
 | `--format csv` | past ~1M results, skip Excel entirely |
 
 `--max-addresses` (default 5,000,000) asks for confirmation before sweeping a
@@ -245,7 +260,7 @@ queries. `--yes` skips the prompt; unattended runs refuse without it.
 
 ```text
 asn_scan.py         entry point  (also: python -m asnscan)
-selftest.py         56 offline checks
+selftest.py         63 offline checks
 asnscan/
   cli.py            arguments, run order, safety rails
   prefixes.py       RIPEstat -> BGPView fallback, collapse overlaps, freshness

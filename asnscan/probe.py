@@ -53,6 +53,59 @@ def confirm_row(row):
     return row[:7] + (verified,)
 
 
+def relabel(conn, batch=20_000):
+    """
+    Recompute every stored label from the hostname already on record.
+
+    Labels are decided during the scan, so editing a rules file changes
+    nothing about results already in the database. Rescanning hundreds of
+    thousands of addresses to pick up a one-line JSON edit would be
+    absurd; this re-runs only the labelling half of the work, and touches
+    no nameserver at all.
+
+    Paged by primary key rather than held open on one cursor, so the
+    updates cannot disturb the read it is walking.
+    """
+
+    last = b""
+
+    total = 0
+    changed = 0
+
+    while True:
+
+        rows = conn.execute(
+            "SELECT ip_key, hostname, label, matched FROM results "
+            "WHERE ip_key > ? AND hostname <> '' ORDER BY ip_key LIMIT ?",
+            (last, batch),
+        ).fetchall()
+
+        if not rows:
+            break
+
+        last = rows[-1][0]
+
+        updates = []
+
+        for ip_key, hostname, label, matched in rows:
+
+            new_label, new_matched = CLASSIFIER(hostname)
+
+            if new_label != label or int(new_matched) != matched:
+                updates.append((new_label, int(new_matched), ip_key))
+
+        if updates:
+            with conn:
+                conn.executemany(
+                    "UPDATE results SET label = ?, matched = ? "
+                    "WHERE ip_key = ?", updates)
+
+        total += len(rows)
+        changed += len(updates)
+
+    return total, changed
+
+
 def skipped_row(version, ip_int, status="no_zone"):
     """An address inside a block that was skipped without being queried."""
 

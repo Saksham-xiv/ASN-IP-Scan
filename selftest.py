@@ -14,7 +14,7 @@ import sys
 
 from asnscan.classify import Classifier
 from asnscan.prefixes import build, select
-from asnscan.probe import make_row, set_classifier
+from asnscan.probe import make_row, relabel, set_classifier
 from asnscan.report import iter_report, prefix_rows
 from asnscan.scan6 import (children, network_to_node, node_to_address,
                            node_to_network, random_deep_node)
@@ -307,6 +307,41 @@ check("family column",
 
 check("detail rows carry their range",
       details[0][5] in {r[2] for r in ranges}, True)
+
+
+# --- relabelling without rescanning -------------------------------------
+
+section("relabel")
+
+set_classifier(Classifier({"zones": {"example.com": "My Web"}}))
+
+total, changed = relabel(conn)
+
+check("every named row is re-examined", total, 14)
+
+# all 14 move: 13 take the new label, and other.net keeps its label but
+# flips matched 1 -> 0, because "no rules loaded" and "rules loaded, no
+# match" are different answers
+check("rows that moved are written", changed, 14)
+
+check("the new rule is applied",
+      conn.execute("SELECT label, matched FROM results "
+                   "WHERE ip = '192.0.2.10'").fetchone(), ("My Web", 1))
+
+check("v6 rows are relabelled too",
+      conn.execute("SELECT label FROM results "
+                   "WHERE ip = '2001:db8::1'").fetchone()[0], "My Web")
+
+check("rows outside the rules keep their domain label",
+      conn.execute("SELECT label, matched FROM results "
+                   "WHERE ip = '192.0.2.20'").fetchone(), ("other.net", 0))
+
+check("unnamed rows are left alone",
+      conn.execute("SELECT label FROM results "
+                   "WHERE ip = '192.0.2.21'").fetchone()[0], "")
+
+# running it again with the same rules must be a no-op
+check("relabel is idempotent", relabel(conn)[1], 0)
 
 conn.close()
 

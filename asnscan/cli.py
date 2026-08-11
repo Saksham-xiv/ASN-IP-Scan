@@ -10,7 +10,7 @@ from . import __version__
 from .classify import Classifier
 from .console import bad, console, good, info, rule, warn
 from .prefixes import asn_info, get_prefixes
-from .probe import set_classifier
+from .probe import relabel, set_classifier
 from .report import print_summary, save_report
 from .resolve import HAVE_DNSPYTHON, STOP, configure
 from .scan4 import retry_errors, scan_v4
@@ -149,6 +149,11 @@ def parse_args(argv=None):
                       help="fetch the announced space and report it, no DNS")
     mode.add_argument("--report-only", action="store_true",
                       help="rebuild the report from the database")
+    mode.add_argument("--relabel", action="store_true",
+                      help="re-apply --rules to the hostnames already "
+                           "scanned, then rebuild the report. No DNS - use "
+                           "this after editing a rules file instead of "
+                           "rescanning.")
     mode.add_argument("--retry-errors", action="store_true",
                       help="re-query only what never gave an answer")
     mode.add_argument("--include-dead", action="store_true",
@@ -307,6 +312,19 @@ def main(argv=None):
             return 2
 
         info(f"Database: {args.db}")
+
+        if args.relabel:
+            rule("Relabel")
+
+            total, changed = relabel(conn)
+
+            info(f"{fmt(total)} hostnames re-examined, "
+                 f"[good]{fmt(changed)} labels changed[/good]")
+
+            rule("Report")
+            save_report(conn, args)
+            print_summary(conn, args)
+            return 0
 
         if args.report_only:
             rule("Report")
